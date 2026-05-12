@@ -152,6 +152,34 @@
   .summary-stat .l { font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: #888; margin-top: 2px; }
 
   .data-source-badge { display: inline-block; background: #06A77D; color: #fffdf7; padding: 4px 10px; font-family: 'Space Mono', monospace; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; margin-bottom: 12px; }
+  .data-source-badge.custom { background: #E36414; }
+
+  /* 전체 트렌드 데이터 업로드 영역 */
+  .overall-upload-zone {
+    border: 2px dashed #1a1a1a;
+    background: #fffdf7;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .overall-upload-zone.drag { border-color: #E36414; background: #fff5e8; }
+  .overall-upload-zone:hover { background: #fef9ec; }
+  .reset-btn {
+    border: 2px solid #1a1a1a;
+    background: #fffdf7;
+    padding: 6px 12px;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .reset-btn:hover { background: #1a1a1a; color: #fffdf7; }
 
   /* 옵션 상세 모달 */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; display: none; align-items: center; justify-content: center; padding: 20px; }
@@ -263,9 +291,12 @@
 
 <script>
 const STORAGE_KEY = 'hospital_event_reports_v3';
+const OVERALL_DATA_KEY = 'hospital_overall_data_v1';  // 업로드한 전체 트렌드 데이터 저장 키
+const OVERALL_META_KEY = 'hospital_overall_meta_v1'; // 데이터 메타정보 (파일명, 업로드 시각)
 const palette = ['#0F4C5C', '#E36414', '#9A031E', '#5F0F40', '#FB8B24', '#3A86FF', '#06A77D', '#D62246', '#7B287D', '#264653'];
 
-function loadAprilData() {
+// 기본 탑재 데이터 (HTML 안에 박혀있는 것)
+function loadBuiltInData() {
   try {
     const raw = document.getElementById('april-data').textContent;
     const compressed = JSON.parse(raw);
@@ -275,11 +306,35 @@ function loadAprilData() {
       totalCount: c.t, totalCompleted: c.cd,
     }));
   } catch (e) {
-    console.error('4월 데이터 로드 실패:', e);
+    console.error('기본 데이터 로드 실패:', e);
     return [];
   }
 }
-const APRIL_EVENTS = loadAprilData();
+
+// 업로드된 데이터가 있으면 그걸, 없으면 기본 데이터 사용
+function loadOverallData() {
+  try {
+    const stored = localStorage.getItem(OVERALL_DATA_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error('업로드 데이터 로드 실패:', e);
+  }
+  return loadBuiltInData();
+}
+
+function loadOverallMeta() {
+  try {
+    const stored = localStorage.getItem(OVERALL_META_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch (e) {}
+  return null;
+}
+
+// let으로 선언해서 동적 교체 가능
+let APRIL_EVENTS = loadOverallData();
+let OVERALL_META = loadOverallMeta();
 
 const state = {
   topTab: 'overall',
@@ -294,6 +349,9 @@ const state = {
   kwQuery: '',
   kwMode: 'option',  // 'option' | 'hospital'
   optionViewMode: 'group',  // 'group' | 'raw' — 옵션 TOP 표시 방식
+  // 전체 트렌드 데이터 업로드 상태
+  overallUploading: false,
+  overallError: null,
 };
 
 const truncate = (s, n) => !s ? '' : (s.length > n ? s.slice(0, n) + '…' : s);
@@ -412,6 +470,57 @@ async function handleFile(file) {
     state.uploading = false;
     render();
   }
+}
+
+// ─── 전체 트렌드 데이터 업로드 ────────────────────────
+async function handleOverallFile(file) {
+  if (!file) return;
+  state.overallUploading = true;
+  state.overallError = null;
+  render();
+  try {
+    const rows = await parseFile(file);
+    const events = structureData(rows);
+    if (events.length === 0) throw new Error('유효한 이벤트 데이터가 없습니다');
+    
+    // localStorage에 저장 (용량 큼 주의)
+    try {
+      localStorage.setItem(OVERALL_DATA_KEY, JSON.stringify(events));
+      localStorage.setItem(OVERALL_META_KEY, JSON.stringify({
+        fileName: file.name,
+        uploadedAt: Date.now(),
+        eventCount: events.length,
+        hospitalCount: new Set(events.map((e) => e.hospital)).size,
+        totalPurchases: events.reduce((s, e) => s + e.totalCount, 0),
+      }));
+    } catch (storageErr) {
+      throw new Error('브라우저 저장 용량 초과. 다른 탭의 누적 리포트를 정리하시거나 더 작은 파일로 시도해주세요.');
+    }
+    
+    // 메모리에서도 교체
+    APRIL_EVENTS = events;
+    OVERALL_META = loadOverallMeta();
+    
+    // 검색 상태 초기화 (이전 데이터 기준 결과가 남으면 안 됨)
+    state.kwQuery = '';
+  } catch (e) {
+    state.overallError = e.message || '파일 처리 중 오류가 발생했습니다';
+  } finally {
+    state.overallUploading = false;
+    render();
+  }
+}
+
+function resetOverallData() {
+  if (!confirm('업로드한 데이터를 삭제하고 기본 데이터로 되돌릴까요?')) return;
+  try {
+    localStorage.removeItem(OVERALL_DATA_KEY);
+    localStorage.removeItem(OVERALL_META_KEY);
+  } catch (e) {}
+  APRIL_EVENTS = loadBuiltInData();
+  OVERALL_META = null;
+  state.kwQuery = '';
+  render();
 }
 
 function deleteReport(id) {
@@ -807,12 +916,42 @@ function renderOverallTab() {
   const hospitals = new Set(APRIL_EVENTS.map((e) => e.hospital)).size;
   const suggested = suggestKeywords(APRIL_EVENTS);
 
+  // 데이터 출처 표기
+  const isCustom = OVERALL_META !== null;
+  const sourceBadgeHtml = isCustom
+    ? `<div class="data-source-badge custom">📌 업로드된 데이터: ${escapeHtml(OVERALL_META.fileName)} · ${formatDate(OVERALL_META.uploadedAt)}</div>`
+    : `<div class="data-source-badge">📌 기본 데이터: 2024 1~5월 누적 병원 통합 (탑재됨)</div>`;
+  
+  const sourceTitle = isCustom ? '업로드된 시장 데이터' : '전체 시장 데이터';
+  const eyebrowText = isCustom
+    ? `CUSTOM DATA · ${OVERALL_META.fileName.toUpperCase()}`
+    : '2024 JAN-MAY · ALL HOSPITALS';
+
   return `
-    <div class="data-source-badge">📌 DATA SOURCE: 2024 1~5월 누적 병원 통합 데이터 (탑재됨)</div>
+    ${sourceBadgeHtml}
+
+    <div class="overall-upload-zone" id="overallUploadZone">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div style="font-size:22px;">${state.overallUploading ? '⏳' : '🔄'}</div>
+        <div>
+          <div style="font-weight:700;font-size:14px;margin-bottom:2px;">
+            ${state.overallUploading ? '데이터 처리 중...' : '시장 데이터 파일을 드래그하거나 클릭해서 업데이트'}
+          </div>
+          <div style="font-family:'Space Mono',monospace;font-size:11px;color:#666;">
+            새 월 데이터가 나왔을 때 여기에 올리시면 기존 데이터를 대체합니다 · 이 브라우저에 저장됩니다
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        ${isCustom ? `<button class="reset-btn" id="resetOverallBtn">기본 데이터로 되돌리기</button>` : ''}
+        ${state.overallError ? `<div class="error" style="margin:0;">⚠ ${escapeHtml(state.overallError)}</div>` : ''}
+      </div>
+      <input type="file" id="overallFileInput" accept=".xlsx,.xls,.csv" style="display:none">
+    </div>
 
     <div class="summary-box" style="margin-bottom: 24px;">
-      <div class="summary-eyebrow">2024 JAN-MAY · ALL HOSPITALS</div>
-      <h2>전체 시장 데이터</h2>
+      <div class="summary-eyebrow">${escapeHtml(eyebrowText)}</div>
+      <h2>${sourceTitle}</h2>
       <div class="summary-stats">
         <div class="summary-stat"><div class="v">${hospitals.toLocaleString()}</div><div class="l">HOSPITALS</div></div>
         <div class="summary-stat"><div class="v">${totalEvents.toLocaleString()}</div><div class="l">EVENTS</div></div>
@@ -1373,6 +1512,32 @@ function bindTabEvents() {
 }
 
 function bindKwEvents() {
+  // 전체 트렌드 데이터 업로드 영역
+  const overallZone = document.getElementById('overallUploadZone');
+  const overallFileInput = document.getElementById('overallFileInput');
+  if (overallZone && overallFileInput) {
+    overallZone.addEventListener('click', (e) => {
+      // 되돌리기 버튼 클릭은 무시
+      if (e.target.closest('#resetOverallBtn')) return;
+      if (e.target.tagName !== 'INPUT') overallFileInput.click();
+    });
+    overallZone.addEventListener('dragover', (e) => { e.preventDefault(); overallZone.classList.add('drag'); });
+    overallZone.addEventListener('dragleave', () => overallZone.classList.remove('drag'));
+    overallZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      overallZone.classList.remove('drag');
+      const f = e.dataTransfer.files[0];
+      if (f) handleOverallFile(f);
+    });
+    overallFileInput.addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (f) handleOverallFile(f);
+      e.target.value = '';
+    });
+  }
+  const resetBtn = document.getElementById('resetOverallBtn');
+  if (resetBtn) resetBtn.onclick = (e) => { e.stopPropagation(); resetOverallData(); };
+
   const kwInput = document.getElementById('kwInput');
   if (kwInput) {
     kwInput.value = state.kwQuery;
