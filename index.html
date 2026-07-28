@@ -186,6 +186,10 @@
   .modal-overlay.show { display: flex; }
   .modal { background: #fffdf7; border: 3px solid #1a1a1a; max-width: 1100px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 28px; box-shadow: 8px 8px 0 #E36414; }
   .modal-close { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border: 2px solid #1a1a1a; background: #fffdf7; cursor: pointer; font-size: 18px; line-height: 1; }
+  .hide-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 2px solid #1a1a1a; background: #fffdf7; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; user-select: none; transition: all 0.1s; }
+  .hide-toggle:hover { background: #fff5e8; }
+  .hide-toggle input[type="checkbox"] { margin: 0; cursor: pointer; accent-color: #E36414; width: 14px; height: 14px; }
+  .hide-toggle:has(input:checked) { background: #1a1a1a; color: #fffdf7; }
   .modal h2 { font-size: 22px; font-weight: 900; margin: 0 0 8px; line-height: 1.3; word-break: break-word; }
   .modal .modal-meta { font-family: 'Space Mono', monospace; font-size: 11px; color: #888; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #1a1a1a; }
 
@@ -576,7 +580,7 @@ function getKwHelpText() {
 }
 
 // ─── 도넛 SVG (옵션 강조 가능) ──────────────────────
-function buildDonutSVG(options, highlightName) {
+function buildDonutSVG(options, highlightName, hideNumbers) {
   const total = options.reduce((s, o) => s + o.count, 0);
   if (total === 0) return '<div style="color:#888">데이터 없음</div>';
   const cx = 180, cy = 180, rOuter = 140, rInner = 70;
@@ -606,7 +610,7 @@ function buildDonutSVG(options, highlightName) {
     const cls = `pie-slice${isDimmed ? ' dim' : ''}`;
     return `<path class="${cls}" d="${s.d}" fill="${s.fill}" stroke="#1a1a1a" stroke-width="${isHighlighted ? 4 : 2}" fill-rule="evenodd"
        data-name="${escapeHtml(s.opt.name)}" data-count="${s.opt.count}" data-completed="${s.opt.completed}"
-       data-ratio="${s.ratio}" data-color="${s.fill}" />`;
+       data-ratio="${s.ratio}" data-color="${s.fill}" data-hide="${hideNumbers ? '1' : '0'}" />`;
   }).join('');
   return `<svg viewBox="0 0 360 360" width="100%" height="100%" style="max-height:360px" xmlns="http://www.w3.org/2000/svg">${html}</svg>`;
 }
@@ -615,10 +619,14 @@ function attachTooltipHandlers() {
   const tooltip = document.getElementById('tooltip');
   document.querySelectorAll('.pie-slice').forEach((el) => {
     el.addEventListener('mousemove', (e) => {
+      const hide = el.dataset.hide === '1';
       document.getElementById('ttNm').textContent = el.dataset.name;
       document.getElementById('ttPct').textContent = (parseFloat(el.dataset.ratio) * 100).toFixed(1) + '%';
       document.getElementById('ttPct').style.color = el.dataset.color;
-      document.getElementById('ttDet').textContent = `구매 ${el.dataset.count}건 · 시술완료 ${el.dataset.completed}건`;
+      document.getElementById('ttDet').textContent = hide
+        ? ''
+        : `구매 ${el.dataset.count}건 · 시술완료 ${el.dataset.completed}건`;
+      document.getElementById('ttDet').style.display = hide ? 'none' : 'block';
       tooltip.style.display = 'block';
       const rect = tooltip.getBoundingClientRect();
       let left = e.clientX + 14, top = e.clientY + 14;
@@ -1304,42 +1312,69 @@ function renderHospitalSearchHTML() {
 function showEventModal(eventId, highlightOptionName) {
   const event = APRIL_EVENTS.find((e) => e.eventId === eventId);
   if (!event) return;
+  // 초기 상태: 숫자 표시
+  renderEventModalBody(event, highlightOptionName, false);
+  document.getElementById('modalOverlay').classList.add('show');
+}
 
+function renderEventModalBody(event, highlightOptionName, hideNumbers) {
   const completionRate = event.totalCount > 0 ? ((event.totalCompleted / event.totalCount) * 100).toFixed(1) : '0.0';
   const sortedOpts = [...event.options].sort((a, b) => b.count - a.count);
 
   const legendHtml = sortedOpts.map((o, i) => {
     const isHighlight = o.name === highlightOptionName;
+    const infoText = hideNumbers
+      ? `${(o.ratio * 100).toFixed(1)}%`
+      : `${(o.ratio * 100).toFixed(1)}% · 구매 ${o.count} · 완료 ${o.completed}`;
     return `
       <div class="legend-item ${isHighlight ? 'highlight' : ''}">
         <div class="legend-color" style="background:${palette[i % palette.length]}"></div>
         <div class="legend-text">
           <div class="nm">${escapeHtml(o.name)}${isHighlight ? ' <span style="color:#E36414;font-weight:700;">← 선택한 옵션</span>' : ''}</div>
-          <div class="info">${(o.ratio * 100).toFixed(1)}% · 구매 ${o.count} · 완료 ${o.completed}</div>
+          <div class="info">${infoText}</div>
         </div>
       </div>
     `;
   }).join('');
 
-  const body = `
-    <div class="modal-meta">📍 ${escapeHtml(event.hospital)} · EVENT ID ${escapeHtml(event.eventId)}</div>
-    <h2>${escapeHtml(event.eventName)}</h2>
-    
+  const statsHtml = hideNumbers ? '' : `
     <div class="stat-row" style="margin-top: 20px;">
       <div class="stat"><div class="lbl">EVENT TOTAL</div><div class="val">${event.totalCount}</div></div>
       <div class="stat"><div class="lbl">COMPLETED</div><div class="val">${event.totalCompleted}</div></div>
       <div class="stat dark"><div class="lbl">COMPLETION RATE</div><div class="val">${completionRate}%</div></div>
     </div>
+  `;
+
+  const body = `
+    <div class="modal-meta">📍 ${escapeHtml(event.hospital)} · EVENT ID ${escapeHtml(event.eventId)}</div>
+    <h2>${escapeHtml(event.eventName)}</h2>
+
+    <div style="margin-top: 16px; display: flex; align-items: center; gap: 10px;">
+      <label class="hide-toggle">
+        <input type="checkbox" id="hideNumbersToggle" ${hideNumbers ? 'checked' : ''}>
+        <span>구매수 · 완료수 숨기기</span>
+      </label>
+      ${hideNumbers ? '<span style="font-family:\'Space Mono\',monospace;font-size:11px;color:#E36414;">비중(%)만 표시 중</span>' : ''}
+    </div>
+
+    ${statsHtml}
 
     <div class="chart-box" style="margin-top: 20px;">
-      <div class="chart-svg-wrap">${buildDonutSVG(event.options, highlightOptionName)}</div>
+      <div class="chart-svg-wrap">${buildDonutSVG(event.options, highlightOptionName, hideNumbers)}</div>
       <div class="legend">${legendHtml}</div>
     </div>
   `;
 
   document.getElementById('modalBody').innerHTML = body;
-  document.getElementById('modalOverlay').classList.add('show');
   attachTooltipHandlers();
+
+  // 토글 이벤트 바인딩
+  const toggle = document.getElementById('hideNumbersToggle');
+  if (toggle) {
+    toggle.onchange = (e) => {
+      renderEventModalBody(event, highlightOptionName, e.target.checked);
+    };
+  }
 }
 
 function closeModal() {
