@@ -181,6 +181,38 @@
   }
   .reset-btn:hover { background: #1a1a1a; color: #fffdf7; }
 
+  /* 병원 전달 모드 토글 (글로벌 숫자 숨김) */
+  .top-badges-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .client-mode-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; margin-bottom: 20px;
+    border: 2px solid #1a1a1a; background: #fffdf7;
+    transition: all 0.2s ease;
+  }
+  .client-mode-bar.active { background: #1a1a1a; color: #fffdf7; box-shadow: 4px 4px 0 #E36414; }
+  .client-mode-toggle { display: flex; align-items: center; gap: 14px; cursor: pointer; user-select: none; flex: 1; }
+  .client-mode-toggle input[type="checkbox"] { position: absolute; opacity: 0; pointer-events: none; }
+  .toggle-track {
+    display: inline-block; width: 44px; height: 24px; background: #ccc;
+    border: 2px solid #1a1a1a; border-radius: 100px; position: relative;
+    transition: background 0.2s ease; flex-shrink: 0;
+  }
+  .toggle-thumb {
+    position: absolute; top: 1px; left: 1px;
+    width: 18px; height: 18px; background: #fffdf7; border: 2px solid #1a1a1a;
+    border-radius: 50%; transition: transform 0.2s ease;
+  }
+  .client-mode-toggle input:checked + .toggle-track { background: #E36414; }
+  .client-mode-toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(20px); }
+  .toggle-label { display: flex; flex-direction: column; gap: 2px; }
+  .toggle-title { font-size: 14px; font-weight: 700; }
+  .toggle-desc { font-family: 'Space Mono', monospace; font-size: 11px; opacity: 0.75; }
+  .client-mode-bar.active .toggle-desc { color: #ffd6ad; opacity: 1; }
+  .client-mode-status {
+    font-family: 'Space Mono', monospace; font-size: 11px;
+    background: #E36414; color: #fffdf7; padding: 4px 10px; letter-spacing: 0.1em; font-weight: 700;
+  }
+
   /* 옵션 상세 모달 */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; display: none; align-items: center; justify-content: center; padding: 20px; }
   .modal-overlay.show { display: flex; }
@@ -297,6 +329,7 @@
 const STORAGE_KEY = 'hospital_event_reports_v3';
 const OVERALL_DATA_KEY = 'hospital_overall_data_v1';  // 업로드한 전체 트렌드 데이터 저장 키
 const OVERALL_META_KEY = 'hospital_overall_meta_v1'; // 데이터 메타정보 (파일명, 업로드 시각)
+const HIDE_NUMBERS_KEY = 'hospital_hide_numbers_v1'; // 결제수·완료수 숨김 상태
 const palette = ['#0F4C5C', '#E36414', '#9A031E', '#5F0F40', '#FB8B24', '#3A86FF', '#06A77D', '#D62246', '#7B287D', '#264653'];
 
 // 기본 탑재 데이터 (HTML 안에 박혀있는 것)
@@ -356,7 +389,25 @@ const state = {
   // 전체 트렌드 데이터 업로드 상태
   overallUploading: false,
   overallError: null,
+  // 병원 전달용 모드 (결제수·완료수 숨김)
+  hideNumbers: (function() {
+    try { return localStorage.getItem(HIDE_NUMBERS_KEY) === '1'; }
+    catch { return false; }
+  })(),
 };
+
+// 결제수·완료수 표시 헬퍼 (hideNumbers가 true면 빈 문자열)
+function fmtCount(n) {
+  return state.hideNumbers ? '' : `${Number(n).toLocaleString()}건`;
+}
+function fmtCountSuffix(n, suffix) {
+  return state.hideNumbers ? '' : `${Number(n).toLocaleString()}${suffix || '건'}`;
+}
+function toggleHideNumbers() {
+  state.hideNumbers = !state.hideNumbers;
+  try { localStorage.setItem(HIDE_NUMBERS_KEY, state.hideNumbers ? '1' : '0'); } catch {}
+  render();
+}
 
 const truncate = (s, n) => !s ? '' : (s.length > n ? s.slice(0, n) + '…' : s);
 const escapeHtml = (s) => s == null ? '' : String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -928,15 +979,34 @@ function renderOverallTab() {
   const isCustom = OVERALL_META !== null;
   const sourceBadgeHtml = isCustom
     ? `<div class="data-source-badge custom">📌 업로드된 데이터: ${escapeHtml(OVERALL_META.fileName)} · ${formatDate(OVERALL_META.uploadedAt)}</div>`
-    : `<div class="data-source-badge">📌 기본 데이터: 2024 1~5월 누적 병원 통합 (탑재됨)</div>`;
-  
+    : `<div class="data-source-badge">📌 탑재된 시장 데이터</div>`;
+
   const sourceTitle = isCustom ? '업로드된 시장 데이터' : '전체 시장 데이터';
   const eyebrowText = isCustom
     ? `CUSTOM DATA · ${OVERALL_META.fileName.toUpperCase()}`
-    : '2024 JAN-MAY · ALL HOSPITALS';
+    : 'MARKET DATA · ALL HOSPITALS';
+
+  // 병원 전달 모드 토글
+  const clientModeBar = `
+    <div class="client-mode-bar ${state.hideNumbers ? 'active' : ''}">
+      <label class="client-mode-toggle">
+        <input type="checkbox" id="clientModeToggle" ${state.hideNumbers ? 'checked' : ''}>
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span class="toggle-label">
+          <span class="toggle-title">🏥 병원 전달 모드</span>
+          <span class="toggle-desc">결제수·완료수 등 절대 수치를 모두 숨기고 비중(%)만 표시합니다</span>
+        </span>
+      </label>
+      ${state.hideNumbers ? '<div class="client-mode-status">🔒 숫자 숨김 활성화 중</div>' : ''}
+    </div>
+  `;
 
   return `
-    ${sourceBadgeHtml}
+    <div class="top-badges-row">
+      ${sourceBadgeHtml}
+    </div>
+
+    ${clientModeBar}
 
     <div class="overall-upload-zone" id="overallUploadZone">
       <div style="display:flex;align-items:center;gap:14px;">
@@ -963,7 +1033,7 @@ function renderOverallTab() {
       <div class="summary-stats">
         <div class="summary-stat"><div class="v">${hospitals.toLocaleString()}</div><div class="l">HOSPITALS</div></div>
         <div class="summary-stat"><div class="v">${totalEvents.toLocaleString()}</div><div class="l">EVENTS</div></div>
-        <div class="summary-stat"><div class="v">${totalPurchases.toLocaleString()}</div><div class="l">PURCHASES</div></div>
+        ${state.hideNumbers ? '' : `<div class="summary-stat"><div class="v">${totalPurchases.toLocaleString()}</div><div class="l">PURCHASES</div></div>`}
         <div class="summary-stat"><div class="v">${APRIL_EVENTS.reduce((s, e) => s + e.options.length, 0).toLocaleString()}</div><div class="l">OPTIONS</div></div>
       </div>
     </div>
@@ -1025,10 +1095,10 @@ function renderGroupedOptionsHTML(result) {
               <div class="group-meta">
                 <span class="group-meta-pill">${g.variantCount}종 표기 통합</span>
                 <span class="group-meta-pill">${g.hospitalCount}개 병원</span>
-                <span class="group-meta-pill">시술완료 ${g.totalCompleted}건</span>
+                ${state.hideNumbers ? '' : `<span class="group-meta-pill">시술완료 ${g.totalCompleted}건</span>`}
               </div>
             </div>
-            <div class="group-count">${g.totalCount.toLocaleString()}건<div class="group-share">전체의 ${(g.totalCount / result.totalPurchases * 100).toFixed(1)}%</div></div>
+            <div class="group-count">${state.hideNumbers ? `${(g.totalCount / result.totalPurchases * 100).toFixed(1)}%` : `${g.totalCount.toLocaleString()}건`}<div class="group-share">${state.hideNumbers ? '전체 매칭 대비' : `전체의 ${(g.totalCount / result.totalPurchases * 100).toFixed(1)}%`}</div></div>
             <div class="group-toggle">▾</div>
           </div>
           <div class="group-detail" id="group-detail-${escapeHtml(g.key)}" style="display:none;">
@@ -1038,9 +1108,9 @@ function renderGroupedOptionsHTML(result) {
                 <div class="variant-bar"><div style="width:${(v.count / g.totalCount * 100).toFixed(1)}%"></div></div>
                 <div class="variant-info">
                   <div class="variant-name">${escapeHtml(v.name)}</div>
-                  <div class="variant-sub">${v.hospitals.length}개 병원 · 완료 ${v.completed}건</div>
+                  <div class="variant-sub">${v.hospitals.length}개 병원${state.hideNumbers ? '' : ` · 완료 ${v.completed}건`}</div>
                 </div>
-                <div class="variant-count">${v.count}건<br><span style="opacity:0.6">${(v.count / g.totalCount * 100).toFixed(1)}%</span></div>
+                <div class="variant-count">${state.hideNumbers ? '' : `${v.count}건`}<br><span style="opacity:0.6">${(v.count / g.totalCount * 100).toFixed(1)}%</span></div>
               </div>
             `).join('')}
             <div class="group-detail-title" style="margin-top:14px;">▸ 이 그룹의 옵션이 속한 이벤트 (TOP 5)</div>
@@ -1063,7 +1133,7 @@ function renderGroupedOptionsHTML(result) {
                     <div class="variant-name">${escapeHtml(truncate(te.eventName, 50))}</div>
                     <div class="variant-sub">@ ${escapeHtml(te.hospital)} · 이벤트 내 비중 ${(te.kwCount / te.eventTotalCount * 100).toFixed(1)}%</div>
                   </div>
-                  <div class="variant-count">${te.kwCount}건</div>
+                  <div class="variant-count">${state.hideNumbers ? `${(te.kwCount / te.eventTotalCount * 100).toFixed(1)}%` : `${te.kwCount}건`}</div>
                 </div>
               `).join('');
             })()}
@@ -1086,11 +1156,11 @@ function renderRawOptionsHTML(result) {
             ${escapeHtml(o.name)}
             <div class="sub">@ ${escapeHtml(o.hospital)} · ${escapeHtml(truncate(o.eventName, 60))}</div>
             <div class="sub" style="margin-top:4px;color:#E36414;">
-              해당 이벤트 내 비중: <strong>${(o.eventShareRatio * 100).toFixed(1)}%</strong> (${o.count}/${o.eventTotalCount}건)
+              해당 이벤트 내 비중: <strong>${(o.eventShareRatio * 100).toFixed(1)}%</strong>${state.hideNumbers ? '' : ` (${o.count}/${o.eventTotalCount}건)`}
               <span class="share-bar"><div style="width:${(o.eventShareRatio * 100).toFixed(1)}%"></div></span>
             </div>
           </div>
-          <div class="value">${o.count}건</div>
+          <div class="value">${state.hideNumbers ? `${(o.eventShareRatio * 100).toFixed(1)}%` : `${o.count}건`}</div>
         </div>
       `).join('')}
     </div>
@@ -1110,7 +1180,7 @@ function renderOptionKeywordHTML() {
         <div class="summary-stat"><div class="v">${result.matchedOptions.length}</div><div class="l">MATCHED OPTIONS</div></div>
         <div class="summary-stat"><div class="v">${result.totalGroups}</div><div class="l">UNIQUE GROUPS</div></div>
         <div class="summary-stat"><div class="v">${result.hospitals}</div><div class="l">HOSPITALS</div></div>
-        <div class="summary-stat"><div class="v">${result.totalPurchases.toLocaleString()}</div><div class="l">PURCHASES</div></div>
+        ${state.hideNumbers ? '' : `<div class="summary-stat"><div class="v">${result.totalPurchases.toLocaleString()}</div><div class="l">PURCHASES</div></div>`}
       </div>
       <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #444; font-family: 'Space Mono', monospace; font-size: 12px; color: #888;">
         평균 이벤트 내 비중: <span style="color: #E36414; font-weight: 700;">${(result.avgEventShare * 100).toFixed(1)}%</span>
@@ -1146,7 +1216,7 @@ function renderOptionKeywordHTML() {
       <div class="bar-item">
         <div class="bar-label">${escapeHtml(k)}</div>
         <div class="bar-track"><div class="bar-fill" style="width:${(v / max * 100).toFixed(1)}%"></div></div>
-        <div class="bar-value">${v.toLocaleString()}건 / ${(v / result.totalPurchases * 100).toFixed(1)}%</div>
+        <div class="bar-value">${state.hideNumbers ? `${(v / result.totalPurchases * 100).toFixed(1)}%` : `${v.toLocaleString()}건 / ${(v / result.totalPurchases * 100).toFixed(1)}%`}</div>
       </div>
     `).join('');
   };
@@ -1163,16 +1233,16 @@ function renderOptionKeywordHTML() {
             <div class="combo-example-name">${escapeHtml(o.name)}</div>
             <div class="combo-example-meta">@ ${escapeHtml(o.hospital)} · ${escapeHtml(truncate(o.eventName, 50))}</div>
           </div>
-          <div class="combo-example-count">${o.count}건</div>
+          <div class="combo-example-count">${state.hideNumbers ? '' : `${o.count}건`}</div>
         </div>
       `).join('');
-      
+
       return `
         <div class="combo-row">
           <div class="combo-row-header" data-combo-toggle="${escapeHtml(k)}">
             <div class="combo-row-label">${escapeHtml(k)}</div>
             <div class="combo-row-track"><div class="combo-row-fill" style="width:${(v / max * 100).toFixed(1)}%"></div></div>
-            <div class="combo-row-value">${v.toLocaleString()}건 / ${(v / totalP * 100).toFixed(1)}%</div>
+            <div class="combo-row-value">${state.hideNumbers ? `${(v / totalP * 100).toFixed(1)}%` : `${v.toLocaleString()}건 / ${(v / totalP * 100).toFixed(1)}%`}</div>
             <div class="combo-row-toggle">▾</div>
           </div>
           <div class="combo-examples" id="combo-ex-${escapeHtml(k)}" style="display:none;">
@@ -1229,9 +1299,9 @@ function renderOptionKeywordHTML() {
               <div class="rank">${String(i + 1).padStart(2, '0')}</div>
               <div class="label">
                 ${escapeHtml(truncate(te.event.eventName, 50))}
-                <div class="sub">@ ${escapeHtml(te.event.hospital)} · 이벤트 전체 ${te.event.totalCount}건</div>
+                <div class="sub">@ ${escapeHtml(te.event.hospital)}${state.hideNumbers ? '' : ` · 이벤트 전체 ${te.event.totalCount}건`}</div>
               </div>
-              <div class="value">${te.kwCount}건</div>
+              <div class="value">${state.hideNumbers ? `${(te.kwCount / te.event.totalCount * 100).toFixed(1)}%` : `${te.kwCount}건`}</div>
             </div>
           `).join('')}
         </div>
@@ -1243,7 +1313,7 @@ function renderOptionKeywordHTML() {
             <div class="ranked-item">
               <div class="rank">${String(i + 1).padStart(2, '0')}</div>
               <div class="label">${escapeHtml(h)}</div>
-              <div class="value">${c}건<br><span style="color:#888;font-weight:400">${(c / result.totalPurchases * 100).toFixed(1)}%</span></div>
+              <div class="value">${state.hideNumbers ? `${(c / result.totalPurchases * 100).toFixed(1)}%` : `${c}건<br><span style="color:#888;font-weight:400">${(c / result.totalPurchases * 100).toFixed(1)}%</span>`}</div>
             </div>
           `).join('')}
         </div>
@@ -1268,7 +1338,7 @@ function renderHospitalSearchHTML() {
       <div class="summary-stats">
         <div class="summary-stat"><div class="v">${Object.keys(result.hospitalGroups).length}</div><div class="l">MATCHED HOSPITALS</div></div>
         <div class="summary-stat"><div class="v">${result.matched.length}</div><div class="l">EVENTS</div></div>
-        <div class="summary-stat"><div class="v">${result.totalPurchases.toLocaleString()}</div><div class="l">PURCHASES</div></div>
+        ${state.hideNumbers ? '' : `<div class="summary-stat"><div class="v">${result.totalPurchases.toLocaleString()}</div><div class="l">PURCHASES</div></div>`}
         <div class="summary-stat"><div class="v">${result.matched.reduce((s, e) => s + e.options.length, 0)}</div><div class="l">OPTIONS</div></div>
       </div>
     </div>
@@ -1280,7 +1350,7 @@ function renderHospitalSearchHTML() {
       const totalH = events.reduce((s, e) => s + e.totalCount, 0);
       html += `
         <div class="insight-section">
-          <h3><span class="icon-emoji">🏥</span> ${escapeHtml(hospital)} <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:400;color:#888;margin-left:8px;">${events.length}개 이벤트 · ${totalH}건 구매</span></h3>
+          <h3><span class="icon-emoji">🏥</span> ${escapeHtml(hospital)} <span style="font-family:'Space Mono',monospace;font-size:11px;font-weight:400;color:#888;margin-left:8px;">${events.length}개 이벤트${state.hideNumbers ? '' : ` · ${totalH}건 구매`}</span></h3>
           <div class="hospital-events-list">
       `;
       events.sort((a, b) => b.totalCount - a.totalCount).forEach((e) => {
@@ -1288,14 +1358,14 @@ function renderHospitalSearchHTML() {
           <div class="hospital-event-card" style="cursor: pointer;" data-event-id="${escapeHtml(e.eventId)}">
             <h4>${escapeHtml(e.eventName)}</h4>
             <div style="font-family:'Space Mono',monospace;font-size:11px;color:#666;">
-              총 ${e.totalCount}건 구매 · ${e.options.length}개 옵션 · 시술완료 ${e.totalCompleted}건
+              ${e.options.length}개 옵션${state.hideNumbers ? '' : ` · 총 ${e.totalCount}건 구매 · 시술완료 ${e.totalCompleted}건`}
             </div>
             <div class="opt-mini-list">
               ${e.options.sort((a, b) => b.count - a.count).map((o) => `
                 <div class="opt-mini-row">
                   <div class="nm">${escapeHtml(o.name)}</div>
                   <div class="bar"><div style="width:${(o.ratio * 100).toFixed(1)}%"></div></div>
-                  <div class="val">${(o.ratio * 100).toFixed(1)}% · ${o.count}건</div>
+                  <div class="val">${state.hideNumbers ? `${(o.ratio * 100).toFixed(1)}%` : `${(o.ratio * 100).toFixed(1)}% · ${o.count}건`}</div>
                 </div>
               `).join('')}
             </div>
@@ -1312,12 +1382,12 @@ function renderHospitalSearchHTML() {
 function showEventModal(eventId, highlightOptionName) {
   const event = APRIL_EVENTS.find((e) => e.eventId === eventId);
   if (!event) return;
-  // 초기 상태: 숫자 표시
-  renderEventModalBody(event, highlightOptionName, false);
+  renderEventModalBody(event, highlightOptionName);
   document.getElementById('modalOverlay').classList.add('show');
 }
 
-function renderEventModalBody(event, highlightOptionName, hideNumbers) {
+function renderEventModalBody(event, highlightOptionName) {
+  const hideNumbers = state.hideNumbers;
   const completionRate = event.totalCount > 0 ? ((event.totalCompleted / event.totalCount) * 100).toFixed(1) : '0.0';
   const sortedOpts = [...event.options].sort((a, b) => b.count - a.count);
 
@@ -1337,7 +1407,11 @@ function renderEventModalBody(event, highlightOptionName, hideNumbers) {
     `;
   }).join('');
 
-  const statsHtml = hideNumbers ? '' : `
+  const statsHtml = hideNumbers ? `
+    <div class="stat-row" style="margin-top: 20px;">
+      <div class="stat dark"><div class="lbl">COMPLETION RATE</div><div class="val">${completionRate}%</div></div>
+    </div>
+  ` : `
     <div class="stat-row" style="margin-top: 20px;">
       <div class="stat"><div class="lbl">EVENT TOTAL</div><div class="val">${event.totalCount}</div></div>
       <div class="stat"><div class="lbl">COMPLETED</div><div class="val">${event.totalCompleted}</div></div>
@@ -1345,17 +1419,15 @@ function renderEventModalBody(event, highlightOptionName, hideNumbers) {
     </div>
   `;
 
+  const clientModeNotice = hideNumbers
+    ? '<div style="margin-top:16px;padding:8px 12px;background:#fff5e8;border:2px solid #E36414;font-family:\'Space Mono\',monospace;font-size:11px;color:#E36414;font-weight:700;">🏥 병원 전달 모드: 결제수·완료수 숨김 중 (첫 화면에서 해제 가능)</div>'
+    : '';
+
   const body = `
     <div class="modal-meta">📍 ${escapeHtml(event.hospital)} · EVENT ID ${escapeHtml(event.eventId)}</div>
     <h2>${escapeHtml(event.eventName)}</h2>
 
-    <div style="margin-top: 16px; display: flex; align-items: center; gap: 10px;">
-      <label class="hide-toggle">
-        <input type="checkbox" id="hideNumbersToggle" ${hideNumbers ? 'checked' : ''}>
-        <span>구매수 · 완료수 숨기기</span>
-      </label>
-      ${hideNumbers ? '<span style="font-family:\'Space Mono\',monospace;font-size:11px;color:#E36414;">비중(%)만 표시 중</span>' : ''}
-    </div>
+    ${clientModeNotice}
 
     ${statsHtml}
 
@@ -1367,14 +1439,6 @@ function renderEventModalBody(event, highlightOptionName, hideNumbers) {
 
   document.getElementById('modalBody').innerHTML = body;
   attachTooltipHandlers();
-
-  // 토글 이벤트 바인딩
-  const toggle = document.getElementById('hideNumbersToggle');
-  if (toggle) {
-    toggle.onchange = (e) => {
-      renderEventModalBody(event, highlightOptionName, e.target.checked);
-    };
-  }
 }
 
 function closeModal() {
@@ -1547,6 +1611,12 @@ function bindTabEvents() {
 }
 
 function bindKwEvents() {
+  // 병원 전달 모드 토글
+  const clientToggle = document.getElementById('clientModeToggle');
+  if (clientToggle) {
+    clientToggle.onchange = () => toggleHideNumbers();
+  }
+
   // 전체 트렌드 데이터 업로드 영역
   const overallZone = document.getElementById('overallUploadZone');
   const overallFileInput = document.getElementById('overallFileInput');
